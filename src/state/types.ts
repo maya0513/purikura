@@ -10,6 +10,10 @@ export interface BeautyParams {
   eyes: boolean;
   /** Skin smoothing intensity 0..1. Defaults to 0.85 for プリクラ強め. */
   strength: number;
+  /** Blemish removal intensity 0..1. */
+  blemishStrength: number;
+  /** Eye enlargement intensity 0..1. */
+  eyesStrength: number;
 }
 
 export interface DekoItem {

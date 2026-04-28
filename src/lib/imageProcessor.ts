@@ -1,6 +1,7 @@
 import type { FilterName, FrameName, BeautyParams, DekoItem } from "~/state/types";
 import { PHOTO_WIDTH, PHOTO_HEIGHT } from "~/state/types";
 import { extractGeometry, type FaceGeometry } from "~/lib/faceLandmarks";
+import { renderFrame } from "~/lib/frameRenderer";
 
 type WasmModule = {
   apply_filter: (pixels: Uint8Array, w: number, h: number, filter: string) => Uint8Array;
@@ -84,9 +85,6 @@ function toDataUrl(pixels: Uint8Array | Uint8ClampedArray): string {
   return c.toDataURL("image/png");
 }
 
-const BLEMISH_STRENGTH = 0.95;
-const EYE_STRENGTH = 0.55;
-
 export async function processPhoto(
   dataUrl: string,
   filter: FilterName,
@@ -131,7 +129,7 @@ export async function processPhoto(
         PHOTO_WIDTH,
         PHOTO_HEIGHT,
         skinMask,
-        BLEMISH_STRENGTH,
+        clamp01(beauty.blemishStrength ?? 0.95),
       ).buffer,
     );
   }
@@ -151,7 +149,7 @@ export async function processPhoto(
         PHOTO_WIDTH,
         PHOTO_HEIGHT,
         geometry.eyes,
-        EYE_STRENGTH,
+        clamp01(beauty.eyesStrength ?? 0.55),
       ).buffer,
     );
   }
@@ -163,7 +161,7 @@ export async function processPhoto(
   }
 
   if (frame !== "none") {
-    const frameRgba = await loadRgba(`/frames/${frame}.png`);
+    const frameRgba = renderFrame(frame);
     rgba = new Uint8ClampedArray(
       wasm.compose_frame(
         new Uint8Array(rgba.buffer),

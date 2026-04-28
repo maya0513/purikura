@@ -39,7 +39,14 @@ export function reset(): void {
   capturedPhoto.value = null;
   selectedFilter.value = "none";
   selectedFrame.value = "none";
-  beautyParams.value = { skin: true, blemish: true, eyes: true, strength: 0.85 };
+  beautyParams.value = {
+    skin: true,
+    blemish: true,
+    eyes: true,
+    strength: 0.85,
+    blemishStrength: 0.95,
+    eyesStrength: 0.55,
+  };
   dekoItems.value = [];
   processedUrl.value = null;
 }

@@ -63,7 +63,17 @@ export function EditView() {
     return () => {
       cancelled = true;
     };
-  }, [photo, filter, frame, beauty.skin, beauty.blemish, beauty.eyes]);
+  }, [
+    photo,
+    filter,
+    frame,
+    beauty.skin,
+    beauty.blemish,
+    beauty.eyes,
+    beauty.strength,
+    beauty.blemishStrength,
+    beauty.eyesStrength,
+  ]);
 
   useEffect(() => {
     const el = containerRef.current;
