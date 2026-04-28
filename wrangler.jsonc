@@ -1,0 +1,20 @@
+// Cloudflare Workers + Static Assets configuration.
+//
+// This is the unified Workers model that subsumes Pages (announced 2024-2025).
+// No Worker entrypoint is needed — `assets` alone makes Cloudflare serve the
+// `./dist` directory as a static site.
+//
+// Docs: https://developers.cloudflare.com/workers/static-assets/
+{
+  "name": "purikura",
+  "compatibility_date": "2026-04-28",
+  "assets": {
+    "directory": "./dist",
+    // Serve index.html for any unknown path so the SPA's client-side state
+    // machine handles routing. Equivalent to /_redirects with 200 status.
+    "not_found_handling": "single-page-application",
+  },
+  "observability": {
+    "enabled": true,
+  },
+}

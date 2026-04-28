@@ -1,0 +1,51 @@
+{
+  "name": "purikura",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "prepare": "vp config"
+  },
+  "dependencies": {
+    "@preact/signals": "^2.0.0",
+    "@tensorflow-models/face-landmarks-detection": "^1.0.6",
+    "@tensorflow/tfjs-backend-webgl": "^4.22.0",
+    "@tensorflow/tfjs-converter": "^4.22.0",
+    "@tensorflow/tfjs-core": "^4.22.0",
+    "preact": "^10.25.0"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.10.0",
+    "@tailwindcss/vite": "^4.0.0",
+    "@testing-library/preact": "^3.2.0",
+    "@types/node": "^22.0.0",
+    "happy-dom": "^17.0.0",
+    "tailwindcss": "^4.0.0",
+    "typescript": "^5.8.0",
+    "vite-plugin-top-level-await": "^1.4.0",
+    "vite-plugin-wasm": "^3.3.0",
+    "vite-plus": "latest",
+    "wasm-pack": "^0.13.0"
+  },
+  "packageManager": "pnpm@10.33.2",
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "wasm-pack",
+      "@swc/core"
+    ],
+    "overrides": {
+      "vite": "npm:@voidzero-dev/vite-plus-core@latest",
+      "vitest": "npm:@voidzero-dev/vite-plus-test@latest"
+    },
+    "peerDependencyRules": {
+      "allowAny": [
+        "vite",
+        "vitest"
+      ],
+      "allowedVersions": {
+        "vite": "*",
+        "vitest": "*"
+      }
+    }
+  }
+}

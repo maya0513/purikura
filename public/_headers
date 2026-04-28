@@ -1,0 +1,25 @@
+# Long-cache hashed bundle assets (Vite emits content-hashed filenames).
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Photo frames are static art assets — long cache them too.
+/frames/*
+  Cache-Control: public, max-age=31536000, immutable
+
+# Ensure the WASM bundle is served with the correct MIME type so it can be
+# instantiated via streaming compile (WebAssembly.instantiateStreaming).
+# Cache-Control comes from the broader /assets/* rule above — don't repeat it
+# here or both rules merge into a duplicated header.
+/assets/*.wasm
+  Content-Type: application/wasm
+
+# Entry document — never long-cache so users see new builds immediately.
+/
+  Cache-Control: public, max-age=0, must-revalidate
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(self), microphone=()
+
+/index.html
+  Cache-Control: public, max-age=0, must-revalidate
