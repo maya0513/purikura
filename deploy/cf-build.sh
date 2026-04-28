@@ -3,9 +3,7 @@
 #
 # CF's managed CI image ships Node + npm but no Rust toolchain. We install
 # rustup + wasm-pack on the fly, then run the project's standard build
-# (wasm-pack → vite). The local `vite` package is overridden to
-# `@voidzero-dev/vite-plus-core` (see package.json), so `pnpm exec vite build`
-# produces the same output as a local `vp build`.
+# (wasm-pack → vp build, same as `just build` locally).
 
 set -euo pipefail
 
@@ -47,10 +45,8 @@ echo "::: building wasm"
 (cd wasm && wasm-pack build --target web --out-dir ../src/wasm/pkg --out-name purikura_wasm)
 
 # --- Build frontend --------------------------------------------------------
-# Local `vite` is overridden to `@voidzero-dev/vite-plus-core`, equivalent to
-# `vp build`.
 echo "::: building frontend"
-pnpm exec vite build
+pnpm exec vp build
 
 echo "::: done"
 ls -la dist/

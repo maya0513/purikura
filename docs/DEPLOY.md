@@ -55,7 +55,7 @@ pnpm dlx wrangler@latest dev
 2. **wasm-pack インストール** — 同上、`wasm-pack` 公式インストーラ
 3. **`pnpm install --ignore-scripts`** — `prepare: vp config` は vp 不在の環境では失敗するのでスキップ
 4. **`wasm-pack build`** — `src/wasm/pkg` に WASM 出力
-5. **`pnpm exec vite build`** — vite-plus-core（`vite` の overrides 先）で `dist/` を生成
+5. **`pnpm exec vp build`** — vite-plus 同梱の `vp` バイナリで `dist/` を生成（`just build` と同じ）
 
 CI 上での所要時間目安: Rust 初回 30-60 秒、それ以降 90 秒程度。
 
