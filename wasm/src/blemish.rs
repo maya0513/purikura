@@ -1,14 +1,35 @@
-// Automatic blemish removal.
+// Automatic blemish removal via Normalized Convolution.
 //
-// Two complementary detectors fire on the skin mask:
+// Detection (gated by skin_mask):
 //   * DoG (Difference of Gaussians) on luminance — Lindeberg 1998 blob theory.
-//     Captures small dark spots (moles, freckles, dark pores).
-//   * Redness score r = (R+1) / (G+B+1) — captures pimples and broken
-//     capillaries that aren't darker than skin but are colour-shifted.
+//     Catches small dark spots: moles, freckles, dark pores, the eyebrow ends
+//     that bled past the exclusion polygon, etc.
+//   * Redness score r = (R+1) / (G+B+1) plus an absolute (R-G) margin —
+//     catches pimples and broken capillaries that aren't darker than skin but
+//     are colour-shifted toward red.
 //
-// Detected pixels are inpainted by blending toward a low-frequency reference
-// (large-σ Gaussian of the input), which is essentially the "spot heal" trick
-// from Lipowezky & Cahen, "Automatic freckles detection and retouching".
+// Repair (the rewritten part):
+//   We previously inpainted by blending toward a global σ=10 Gaussian of the
+//   whole image. At 640×480 with the face occupying ~⅓ of the frame, that
+//   "reference" is contaminated by hair, eyebrows, lips and background — so
+//   the patched colour drifts and texture flattens.
+//
+//   The new repair uses **Normalized Convolution** (Knutsson & Westin 1993):
+//
+//       inpainted(p) = Σ_q [ G(p-q) · c(q) · I(q) ]
+//                      ─────────────────────────────
+//                      Σ_q [ G(p-q) · c(q) ]
+//
+//   where c(q) = (1 − blemish_score) · skin_mask. Pixels confidently identified
+//   as "normal skin" vote on the patched colour; the detected blemish votes
+//   with weight zero. Implemented with separable box blur (radius scales with
+//   image size) so it stays O(N) and fast in wasm.
+//
+//   The result: each blemish pixel is replaced by the local mean of the
+//   *surrounding healthy skin*. Texture and tone of the neighbourhood survive,
+//   only the spot disappears.
+
+const REPAIR_RADIUS_FRAC: f32 = 0.012; // ≈ 8 px on 640×480 → ~16 px diameter, larger than typical spots
 
 /// 1-D Gaussian kernel, normalized.
 fn gaussian_kernel_1d(sigma: f32) -> Vec<f32> {
@@ -35,8 +56,7 @@ fn gaussian_blur_f32(src: &[f32], width: usize, height: usize, sigma: f32) -> Ve
         for x in 0..width {
             let mut s = 0f32;
             for (ki, &kw) in kernel.iter().enumerate() {
-                let nx = (x as i64 + ki as i64 - radius as i64)
-                    .clamp(0, width as i64 - 1) as usize;
+                let nx = (x as i64 + ki as i64 - radius as i64).clamp(0, width as i64 - 1) as usize;
                 s += src[y * width + nx] * kw;
             }
             tmp[y * width + x] = s;
@@ -47,8 +67,8 @@ fn gaussian_blur_f32(src: &[f32], width: usize, height: usize, sigma: f32) -> Ve
         for x in 0..width {
             let mut s = 0f32;
             for (ki, &kw) in kernel.iter().enumerate() {
-                let ny = (y as i64 + ki as i64 - radius as i64)
-                    .clamp(0, height as i64 - 1) as usize;
+                let ny =
+                    (y as i64 + ki as i64 - radius as i64).clamp(0, height as i64 - 1) as usize;
                 s += tmp[ny * width + x] * kw;
             }
             dst[y * width + x] = s;
@@ -57,26 +77,41 @@ fn gaussian_blur_f32(src: &[f32], width: usize, height: usize, sigma: f32) -> Ve
     dst
 }
 
-/// Gaussian blur on RGBA. Alpha pass-through.
-fn gaussian_blur_rgba(pixels: &[u8], width: usize, height: usize, sigma: f32) -> Vec<u8> {
+/// Separable box blur on a f32 channel with edge-replicating boundaries.
+fn box_blur_f32(src: &[f32], width: usize, height: usize, radius: usize) -> Vec<f32> {
     let n = width * height;
-    let mut chans: [Vec<f32>; 3] = [vec![0f32; n], vec![0f32; n], vec![0f32; n]];
-    for k in 0..n {
-        for c in 0..3 {
-            chans[c][k] = pixels[k * 4 + c] as f32;
+    if radius == 0 {
+        return src.to_vec();
+    }
+    let win = (radius * 2 + 1) as f32;
+    let mut tmp = vec![0f32; n];
+    for y in 0..height {
+        let row = y * width;
+        let mut acc = (radius as f32) * src[row];
+        for k in 0..=radius.min(width - 1) {
+            acc += src[row + k];
+        }
+        for x in 0..width {
+            tmp[row + x] = acc / win;
+            let left = x.saturating_sub(radius);
+            let right = (x + radius + 1).min(width - 1);
+            acc += src[row + right] - src[row + left];
         }
     }
-    for c in 0..3 {
-        chans[c] = gaussian_blur_f32(&chans[c], width, height, sigma);
-    }
-    let mut out = vec![0u8; pixels.len()];
-    for k in 0..n {
-        for c in 0..3 {
-            out[k * 4 + c] = chans[c][k].clamp(0.0, 255.0) as u8;
+    let mut dst = vec![0f32; n];
+    for x in 0..width {
+        let mut acc = (radius as f32) * tmp[x];
+        for k in 0..=radius.min(height - 1) {
+            acc += tmp[k * width + x];
         }
-        out[k * 4 + 3] = pixels[k * 4 + 3];
+        for y in 0..height {
+            dst[y * width + x] = acc / win;
+            let top = y.saturating_sub(radius);
+            let bot = (y + radius + 1).min(height - 1);
+            acc += tmp[bot * width + x] - tmp[top * width + x];
+        }
     }
-    out
+    dst
 }
 
 #[inline]
@@ -84,27 +119,11 @@ fn luminance_f32(r: u8, g: u8, b: u8) -> f32 {
     0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32
 }
 
-/// One round of binary 4-neighbour dilation.
-fn dilate_once(mask: &[f32], width: usize, height: usize) -> Vec<f32> {
-    let mut out = mask.to_vec();
-    for y in 0..height {
-        for x in 0..width {
-            let i = y * width + x;
-            let mut m = mask[i];
-            if x > 0 { m = m.max(mask[i - 1]); }
-            if x + 1 < width { m = m.max(mask[i + 1]); }
-            if y > 0 { m = m.max(mask[i - width]); }
-            if y + 1 < height { m = m.max(mask[i + width]); }
-            out[i] = m;
-        }
-    }
-    out
-}
-
-/// Detect and inpaint blemishes inside the skin region.
+/// Detect blemishes and inpaint via normalized convolution.
 ///
-/// `skin_mask` (0..255) gates detection — pixels with mask=0 are never inpainted.
-/// `strength` (0..1) scales the inpaint blend at full detection (typical 0.95).
+/// `skin_mask` (0..255) gates detection AND defines the trusted neighbourhood
+/// for inpainting — non-skin pixels never contribute to the patched colour.
+/// `strength` (0..1) scales the final blend at full detection.
 pub fn remove_blemish(
     pixels: &[u8],
     width: usize,
@@ -115,60 +134,93 @@ pub fn remove_blemish(
     let n = width * height;
     debug_assert_eq!(pixels.len(), n * 4);
     debug_assert_eq!(skin_mask.len(), n);
+    let strength = strength.clamp(0.0, 1.0);
 
-    // 1) Luminance.
+    // 1) Luminance for blob detection.
     let mut lum = vec![0f32; n];
     for k in 0..n {
         lum[k] = luminance_f32(pixels[k * 4], pixels[k * 4 + 1], pixels[k * 4 + 2]);
     }
 
-    // 2) DoG: small Gaussian minus larger Gaussian.
-    let g1 = gaussian_blur_f32(&lum, width, height, 1.5);
-    let g2 = gaussian_blur_f32(&lum, width, height, 4.0);
-    // Dark blob ⇒ DoG = g1 - g2 < 0  (smaller scale dips below larger scale).
-    // We'll express dark_score = max(0, g2 - g1) / norm.
-    // Threshold tuned for [0..255] luminance: 4.0 catches subtle freckles too.
-    let dark_thresh: f32 = 4.0;
+    // 2) DoG dark-blob score. σ_small captures pore/freckle scale, σ_large the
+    //    surrounding skin tone. Score saturates at DARK_NORM above the threshold.
+    let g_small = gaussian_blur_f32(&lum, width, height, 1.2);
+    let g_large = gaussian_blur_f32(&lum, width, height, 5.0);
+    let dark_thresh = 6.0f32;
+    let dark_norm = 12.0f32;
     let mut dark_score = vec![0f32; n];
     for k in 0..n {
-        let d = (g2[k] - g1[k]).max(0.0);
-        dark_score[k] = ((d - dark_thresh) / dark_thresh).clamp(0.0, 1.0);
+        let d = (g_large[k] - g_small[k]).max(0.0);
+        dark_score[k] = ((d - dark_thresh) / dark_norm).clamp(0.0, 1.0);
     }
 
-    // 3) Redness score (R+1)/(G+B+1). Skin baseline ~ 1.0, pimples > 1.4.
-    let red_thresh: f32 = 1.35;
-    let red_norm: f32 = 0.4; // saturate at red_thresh + red_norm
+    // 3) Redness score: ratio AND absolute (R-G) margin together — ratio alone
+    //    flags any warm pixel; the margin requirement keeps it specific to red
+    //    inflammation rather than baseline skin warmth.
+    let red_ratio_thresh = 1.45f32;
+    let red_ratio_norm = 0.35f32;
+    let red_margin_thresh = 35.0f32;
+    let red_margin_norm = 25.0f32;
     let mut red_score = vec![0f32; n];
     for k in 0..n {
-        let r = pixels[k * 4] as f32 + 1.0;
-        let gb = pixels[k * 4 + 1] as f32 + pixels[k * 4 + 2] as f32 + 1.0;
-        let ratio = r / gb;
-        red_score[k] = ((ratio - red_thresh) / red_norm).clamp(0.0, 1.0);
+        let r = pixels[k * 4] as f32;
+        let g = pixels[k * 4 + 1] as f32;
+        let b = pixels[k * 4 + 2] as f32;
+        let ratio = (r + 1.0) / (g + b + 1.0);
+        let ratio_score = ((ratio - red_ratio_thresh) / red_ratio_norm).clamp(0.0, 1.0);
+        let margin = r - g;
+        let margin_score = ((margin - red_margin_thresh) / red_margin_norm).clamp(0.0, 1.0);
+        red_score[k] = ratio_score.min(margin_score);
     }
 
-    // 4) Combine, gate by skin mask.
+    // 4) Combine and gate by skin mask.
     let mut score = vec![0f32; n];
     for k in 0..n {
         let m = skin_mask[k] as f32 / 255.0;
         score[k] = dark_score[k].max(red_score[k]) * m;
     }
 
-    // 5) Slight dilation so we catch the blemish boundary, not just the centre.
-    let score = dilate_once(&score, width, height);
+    // 5) Normalized convolution. confidence = (1 − score) · skin_mask gives the
+    //    weight of "trusted normal-skin" testimony. Sum of weighted RGB ÷ sum
+    //    of weights = the locally-supported skin colour at this pixel.
+    let mut confidence = vec![0f32; n];
+    for k in 0..n {
+        let m = skin_mask[k] as f32 / 255.0;
+        confidence[k] = (1.0 - score[k]) * m;
+    }
+    let radius = ((width.max(height) as f32) * REPAIR_RADIUS_FRAC).round() as usize;
+    let radius = radius.max(3);
 
-    // 6) Inpaint reference: large-σ blur of the source RGBA.
-    //    σ=10 ≈ 60-pixel kernel — well beyond typical pore/spot diameter, so
-    //    the blurred image is essentially "skin tone with hair/lips smeared in"
-    //    — but we only blend where score>0 (and score is gated by skin_mask).
-    let low_freq = gaussian_blur_rgba(pixels, width, height, 10.0);
+    let blurred_conf = box_blur_f32(&confidence, width, height, radius);
+    let mut patched = [vec![0f32; n], vec![0f32; n], vec![0f32; n]];
+    for c in 0..3 {
+        let mut weighted = vec![0f32; n];
+        for k in 0..n {
+            weighted[k] = pixels[k * 4 + c] as f32 * confidence[k];
+        }
+        let blurred_w = box_blur_f32(&weighted, width, height, radius);
+        for k in 0..n {
+            // Avoid div-by-zero where the window is entirely outside the skin
+            // mask — fall back to the original pixel (the score will be 0
+            // there anyway, so the blend is a no-op).
+            let denom = blurred_conf[k];
+            patched[c][k] = if denom > 1e-4 {
+                blurred_w[k] / denom
+            } else {
+                pixels[k * 4 + c] as f32
+            };
+        }
+    }
 
-    // 7) Composite.
+    // 6) Composite. The inpainted colour replaces the original in proportion
+    //    to the blemish score (× user strength). Skin texture outside the
+    //    spot is untouched.
     let mut out = pixels.to_vec();
     for k in 0..n {
         let t = score[k] * strength;
         for c in 0..3 {
             let a = pixels[k * 4 + c] as f32;
-            let b = low_freq[k * 4 + c] as f32;
+            let b = patched[c][k];
             out[k * 4 + c] = (a + (b - a) * t).clamp(0.0, 255.0) as u8;
         }
     }
@@ -206,12 +258,11 @@ mod tests {
     #[test]
     fn dark_spot_lifted_toward_skin_tone() {
         // Skin background with a single dark spot at center.
-        let w = 41;
-        let h = 41;
+        let w = 81;
+        let h = 81;
         let mut pixels = make_skin_image(w, h);
         let cx = w / 2;
         let cy = h / 2;
-        // Make a small dark circle (radius 2)
         for dy in -2i32..=2 {
             for dx in -2i32..=2 {
                 if dx * dx + dy * dy <= 4 {
@@ -225,21 +276,17 @@ mod tests {
             }
         }
         let mask = full_mask(w * h);
-        let out = remove_blemish(&pixels, w, h, &mask, 0.95);
+        let out = remove_blemish(&pixels, w, h, &mask, 1.0);
         let center = (cy * w + cx) * 4;
-        // After inpainting, the center should be much closer to skin tone than the original 80.
-        assert!(
-            out[center] > 160,
-            "dark spot still dark: R={}",
-            out[center]
-        );
+        // After inpainting, the center should be close to skin tone (220) — not
+        // the original 80, and not far below skin tone either (no dark drift).
+        assert!(out[center] > 195, "dark spot still dark: R={}", out[center]);
     }
 
     #[test]
     fn red_pimple_neutralised() {
-        // Skin background with a single very-red spot at center.
-        let w = 41;
-        let h = 41;
+        let w = 81;
+        let h = 81;
         let mut pixels = make_skin_image(w, h);
         let cx = w / 2;
         let cy = h / 2;
@@ -256,9 +303,9 @@ mod tests {
             }
         }
         let mask = full_mask(w * h);
-        let out = remove_blemish(&pixels, w, h, &mask, 0.95);
+        let out = remove_blemish(&pixels, w, h, &mask, 1.0);
         let center = (cy * w + cx) * 4;
-        // Red drops a lot, green/blue rise toward skin baseline.
+        // Red drops a lot, green/blue lift toward skin baseline.
         assert!(out[center] < 240, "red still saturated: R={}", out[center]);
         assert!(
             out[center + 1] > 120,
@@ -269,8 +316,8 @@ mod tests {
 
     #[test]
     fn mask_zero_blocks_inpaint() {
-        let w = 41;
-        let h = 41;
+        let w = 81;
+        let h = 81;
         let mut pixels = make_skin_image(w, h);
         let cx = w / 2;
         let cy = h / 2;
@@ -289,7 +336,6 @@ mod tests {
         let mask = vec![0u8; w * h]; // mask blocks everything
         let out = remove_blemish(&pixels, w, h, &mask, 0.95);
         let center = (cy * w + cx) * 4;
-        // No change because mask=0
         assert_eq!(out[center], 80);
     }
 
@@ -302,6 +348,60 @@ mod tests {
         let out = remove_blemish(&pixels, w, h, &mask, 0.95);
         for k in 0..(w * h) {
             assert_eq!(out[k * 4 + 3], 137);
+        }
+    }
+
+    #[test]
+    fn distant_pixels_untouched_by_local_repair() {
+        // Single dark spot at center; verify pixels far outside the repair
+        // window are bit-identical to the input. This is what normalized
+        // convolution buys us over the previous global-Gaussian reference.
+        let w = 161;
+        let h = 161;
+        let mut pixels = make_skin_image(w, h);
+        let cx = w / 2;
+        let cy = h / 2;
+        for dy in -2i32..=2 {
+            for dx in -2i32..=2 {
+                if dx * dx + dy * dy <= 4 {
+                    let x = (cx as i32 + dx) as usize;
+                    let y = (cy as i32 + dy) as usize;
+                    let i = (y * w + x) * 4;
+                    pixels[i] = 80;
+                    pixels[i + 1] = 60;
+                    pixels[i + 2] = 50;
+                }
+            }
+        }
+        let mask = full_mask(w * h);
+        let out = remove_blemish(&pixels, w, h, &mask, 1.0);
+        // Pixel near the corner — well outside the repair radius (~ max(w,h)*0.012 ≈ 2 px,
+        // clamped up to 3, plus DoG support ~15 px). 50 px away is comfortably outside.
+        let far = (10 * w + 10) * 4;
+        for c in 0..3 {
+            assert_eq!(
+                out[far + c],
+                pixels[far + c],
+                "far pixel changed at c={}",
+                c
+            );
+        }
+    }
+
+    #[test]
+    fn flat_warm_skin_does_not_trigger_redness() {
+        // Pure warm skin (no inflammation) — must NOT be detected as red blemish.
+        // Tests that the absolute (R-G) margin requirement keeps baseline skin safe.
+        let w = 30;
+        let h = 30;
+        let pixels: Vec<u8> = (0..w * h).flat_map(|_| [230u8, 190, 160, 255]).collect();
+        let mask = full_mask(w * h);
+        let out = remove_blemish(&pixels, w, h, &mask, 1.0);
+        for k in 0..(w * h) {
+            for c in 0..3 {
+                let d = (out[k * 4 + c] as i32 - pixels[k * 4 + c] as i32).abs();
+                assert!(d <= 3, "warm skin drifted {} at {}/{}", d, k, c);
+            }
         }
     }
 }

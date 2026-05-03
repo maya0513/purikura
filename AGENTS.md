@@ -1,88 +1,83 @@
-<!--VITE PLUS START-->
+# purikura
 
-# Using Vite+, the Unified Toolchain for the Web
+プリクラ風 Web アプリ。カメラで1枚撮影 → 顔加工・装飾を編集 → 画像としてダウンロード。
 
-This project is using Vite+, a unified toolchain built on top of Vite, Rolldown, Vitest, tsdown, Oxlint, Oxfmt, and Vite Task. Vite+ wraps runtime management, package management, and frontend tooling in a single global CLI called `vp`. Vite+ is distinct from Vite, but it invokes Vite through `vp dev` and `vp build`.
+## 技術スタック
 
-## Vite+ Workflow
+- **UI**: Preact + TypeScript + `@preact/signals`
+- **画像処理**: Rust → WASM (`wasm-pack`)。`wasm/` ディレクトリ。
+- **顔ランドマーク**: `@tensorflow-models/face-landmarks-detection`（WebGL backend）
+- **スタイル**: Tailwind CSS v4
+- **ツールチェーン**: Vite+ (`vp` CLI)
+- **タスクランナー**: `just`
 
-`vp` is a global binary that handles the full development lifecycle. Run `vp help` to print a list of commands and `vp <command> --help` for information about a specific command.
+## アプリのフロー
 
-### Start
+`AppState`: `idle | countdown | capturing | edit`
 
-- create - Create a new project from a template
-- migrate - Migrate an existing project to Vite+
-- config - Configure hooks and agent integration
-- staged - Run linters on staged files
-- install (`i`) - Install dependencies
-- env - Manage Node.js versions
+1. `idle` — トップ画面、`canStartCapture`（`wasmReady` が前提）で撮影開始
+2. `countdown` — カウントダウン後に
+3. `capturing` — Camera コンポーネントが1枚キャプチャ → `capturedPhoto` (data URL) にセット
+4. `edit` — 編集パネルで以下を調整しながらリアルタイムプレビュー、確定でダウンロード
 
-### Develop
+写真サイズは固定 `PHOTO_WIDTH=640 × PHOTO_HEIGHT=480`（`src/state/types.ts`）。
 
-- dev - Run the development server
-- check - Run format, lint, and TypeScript type checks
-- lint - Lint code
-- fmt - Format code
-- test - Run tests
+## 編集レイヤ（適用順）
 
-### Execute
+1. **美容加工** (`BeautyPanel`, WASM) — `BeautyParams` の各 strength で制御
+   - `skin`: 美肌（guided filter ベースのスムージング + プリクラ調トーン）
+   - `blemish`: シミ・赤み除去
+   - `eyes`: 虹彩中心の目拡大ワープ
+2. **フィルター** (`FilterPanel`, WASM) — `none | grayscale | sepia | vivid | soft | warm | cool`
+3. **フレーム** (`FramePanel`, WASM 合成) — `none | hearts | stars | flowers | bubbles`
+4. **スタンプ** (`StickerPanel`) — `DekoItem[]`（絵文字を `(x, y)` に配置）
 
-- run - Run monorepo tasks
-- exec - Execute a command from local `node_modules/.bin`
-- dlx - Execute a package binary without installing it as a dependency
-- cache - Manage the task cache
+状態は `src/state/signals.ts` の signal で持つ。`processedUrl` が最終プレビュー。
 
-### Build
+## WASM API（`wasm/src/lib.rs`）
 
-- build - Build for production
-- pack - Build libraries
-- preview - Preview production build
+JS から呼ぶ前提のコントラクト。座標・寸法は基本的に画像の正規化値（0..1）。
 
-### Manage Dependencies
+- `apply_filter(pixels, w, h, filter_name) -> Vec<u8>`
+- `compose_frame(photo, frame, w, h) -> Vec<u8>` — alpha 合成
+- `build_skin_mask(pixels, w, h, face_oval, exclusions_packed) -> Vec<u8>`
+  - `face_oval`: 顔輪郭ポリゴン `[x0,y0,x1,y1,...]`（0..1 正規化）
+  - `exclusions_packed`: 目・口など除外ポリゴンのパック形式 `[n_polys, len_0, x,y,..., len_1, x,y,...]`
+  - フェザー半径は `MASK_FEATHER_RADIUS = 4`
+- `apply_beauty(pixels, w, h, mask, strength) -> Vec<u8>`
+- `remove_blemish(pixels, w, h, mask, strength) -> Vec<u8>`
+- `enlarge_eyes(pixels, w, h, eyes, strength) -> Vec<u8>`
+  - `eyes`: `[cx0, cy0, r0, cx1, cy1, r1, ...]`（cx は width 正規化、cy は height 正規化、典型的に虹彩半径 × 2.5）
 
-Vite+ automatically detects and wraps the underlying package manager such as pnpm, npm, or Yarn through the `packageManager` field in `package.json` or package manager-specific lockfiles.
+**重要**: `mask` は呼び出し側で `build_skin_mask` を1回計算し、`apply_beauty` / `remove_blemish` で使い回す（毎回再計算しない）。
 
-- add - Add packages to dependencies
-- remove (`rm`, `un`, `uninstall`) - Remove packages from dependencies
-- update (`up`) - Update packages to latest versions
-- dedupe - Deduplicate dependencies
-- outdated - Check for outdated packages
-- list (`ls`) - List installed packages
-- why (`explain`) - Show why a package is installed
-- info (`view`, `show`) - View package information from the registry
-- link (`ln`) / unlink - Manage local package links
-- pm - Forward a command to the package manager
+## ディレクトリ
 
-### Maintain
-
-- upgrade - Update `vp` itself to the latest version
-
-These commands map to their corresponding tools. For example, `vp dev --port 3000` runs Vite's dev server and works the same as Vite. `vp test` runs JavaScript tests through the bundled Vitest. The version of all tools can be checked using `vp --version`. This is useful when researching documentation, features, and bugs.
-
-## Common Pitfalls
-
-- **Using the package manager directly:** Do not use pnpm, npm, or Yarn directly. Vite+ can handle all package manager operations.
-- **Always use Vite commands to run tools:** Don't attempt to run `vp vitest` or `vp oxlint`. They do not exist. Use `vp test` and `vp lint` instead.
-- **Running scripts:** Vite+ built-in commands (`vp dev`, `vp build`, `vp test`, etc.) always run the Vite+ built-in tool, not any `package.json` script of the same name. To run a custom script that shares a name with a built-in command, use `vp run <script>`. For example, if you have a custom `dev` script that runs multiple services concurrently, run it with `vp run dev`, not `vp dev` (which always starts Vite's dev server).
-- **Do not install Vitest, Oxlint, Oxfmt, or tsdown directly:** Vite+ wraps these tools. They must not be installed directly. You cannot upgrade these tools by installing their latest versions. Always use Vite+ commands.
-- **Use Vite+ wrappers for one-off binaries:** Use `vp dlx` instead of package-manager-specific `dlx`/`npx` commands.
-- **Import JavaScript modules from `vite-plus`:** Instead of importing from `vite` or `vitest`, all modules should be imported from the project's `vite-plus` dependency. For example, `import { defineConfig } from 'vite-plus';` or `import { expect, test, vi } from 'vite-plus/test';`. You must not install `vitest` to import test utilities.
-- **Type-Aware Linting:** There is no need to install `oxlint-tsgolint`, `vp lint --type-aware` works out of the box.
-
-## CI Integration
-
-For GitHub Actions, consider using [`voidzero-dev/setup-vp`](https://github.com/voidzero-dev/setup-vp) to replace separate `actions/setup-node`, package-manager setup, cache, and install steps with a single action.
-
-```yaml
-- uses: voidzero-dev/setup-vp@v1
-  with:
-    cache: true
-- run: vp check
-- run: vp test
+```
+src/
+  app.tsx            アプリ本体（状態遷移と編集パネルの結線）
+  components/        Camera / BeautyPanel / FilterPanel / FramePanel / StickerPanel / PhotoStrip
+  hooks/             useAppState / useCamera / useCountdown / useFaceFrame / useWasm
+  lib/               imageProcessor / faceLandmarks / frameRenderer / countdown / stateMachine
+  state/             signals.ts, types.ts
+  wasm/pkg/          wasm-pack 出力（gitignore）
+wasm/src/            Rust 実装（beauty / blemish / compositor / eye_warp / filters / guided_filter / skin_mask）
 ```
 
-## Review Checklist for Agents
+## 開発コマンド（`just`）
 
-- [ ] Run `vp install` after pulling remote changes and before getting started.
-- [ ] Run `vp check` and `vp test` to validate changes.
-<!--VITE PLUS END-->
+- `just setup` — Rust target 追加 + `vp install`
+- `just dev` — `wasm-build` 後に dev server
+- `just build` — `wasm-build` 後にプロダクションビルド
+- `just wasm-build` — Rust → WASM（**Rust 側を変更したら必須**。`src/wasm/pkg/` に出力）
+- `just test` — Rust テスト（`cargo test`）+ フロントエンドテスト（`vp test run`）
+- `just check` — `vp check` + `cargo clippy -- -D warnings`
+- `just fmt` / `just lint` / `just clean`
+
+## 注意点
+
+- `vite.config.ts` は `import { defineConfig } from 'vite-plus'`（`vite` から import しない）
+- テストユーティリティは `vite-plus/test`（`vitest` から import しない）
+- `~/` パスエイリアスは `src/` を指す
+- `pnpm.onlyBuiltDependencies` に `wasm-pack`, `@swc/core` が必要
+- パスエイリアスや WASM ロードに関わるので、依存追加時は `vite.config.ts` も確認

@@ -2,12 +2,15 @@ import {
   appState,
   capturedPhoto,
   selectedFilter,
-  selectedFrame,
   beautyParams,
+  makeupParams,
+  toneParams,
+  backgroundParams,
   dekoItems,
   countdownValue,
   processedUrl,
   wasmReady,
+  gpuReady,
 } from "~/state/signals";
 import {
   nextStateOnStart,
@@ -15,7 +18,14 @@ import {
   nextStateOnFinish,
   nextStateOnReset,
 } from "~/lib/stateMachine";
-import type { FilterName, FrameName, BeautyParams, DekoItem } from "~/state/types";
+import type {
+  FilterName,
+  BeautyParams,
+  MakeupParams,
+  ToneParams,
+  BackgroundParams,
+  DekoItem,
+} from "~/state/types";
 
 export function startCountdown(): void {
   appState.value = nextStateOnStart(appState.value);
@@ -38,14 +48,40 @@ export function reset(): void {
   appState.value = nextStateOnReset(appState.value);
   capturedPhoto.value = null;
   selectedFilter.value = "none";
-  selectedFrame.value = "none";
   beautyParams.value = {
     skin: true,
     blemish: true,
     eyes: true,
+    slim: false,
     strength: 0.85,
     blemishStrength: 0.95,
     eyesStrength: 0.55,
+    slimStrength: 0.35,
+  };
+  makeupParams.value = {
+    lipEnabled: false,
+    lipColor: "#e84c6e",
+    lipStrength: 0.5,
+    eyeShadowEnabled: false,
+    eyeShadowColor: "#9b72cf",
+    eyeShadowStrength: 0.35,
+    blushEnabled: false,
+    blushColor: "#ff9090",
+    blushStrength: 0.3,
+  };
+  toneParams.value = {
+    lutPreset: "none",
+    overlayEnabled: false,
+    overlayColor: "#ff88cc",
+    overlayStrength: 0.15,
+    overlayBlendMode: "softlight",
+    vignetteStrength: 0.0,
+  };
+  backgroundParams.value = {
+    mode: "none",
+    blurRadius: 15,
+    solidColor: "#ffffff",
+    imageDataUrl: null,
   };
   dekoItems.value = [];
   processedUrl.value = null;
@@ -55,12 +91,23 @@ export function setFilter(filter: FilterName): void {
   selectedFilter.value = filter;
 }
 
-export function setFrame(frame: FrameName): void {
-  selectedFrame.value = frame;
-}
-
 export function setBeautyParam<K extends keyof BeautyParams>(key: K, value: BeautyParams[K]): void {
   beautyParams.value = { ...beautyParams.value, [key]: value };
+}
+
+export function setMakeupParam<K extends keyof MakeupParams>(key: K, value: MakeupParams[K]): void {
+  makeupParams.value = { ...makeupParams.value, [key]: value };
+}
+
+export function setToneParam<K extends keyof ToneParams>(key: K, value: ToneParams[K]): void {
+  toneParams.value = { ...toneParams.value, [key]: value };
+}
+
+export function setBackgroundParam<K extends keyof BackgroundParams>(
+  key: K,
+  value: BackgroundParams[K],
+): void {
+  backgroundParams.value = { ...backgroundParams.value, [key]: value };
 }
 
 export function addDekoItem(item: DekoItem): void {
@@ -77,6 +124,10 @@ export function setProcessedUrl(url: string): void {
 
 export function markWasmReady(): void {
   wasmReady.value = true;
+}
+
+export function markGpuReady(): void {
+  gpuReady.value = true;
 }
 
 export function tickCountdown(value: number): void {

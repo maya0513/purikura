@@ -1,12 +1,31 @@
+mod background;
 mod beauty;
 mod blemish;
-mod compositor;
+mod color_overlay;
+mod eye_sparkle;
 mod eye_warp;
+mod face_slim;
 mod filters;
+mod gpu;
 mod guided_filter;
+mod interpolation;
+mod lut3d;
+mod makeup;
 mod skin_mask;
+mod skin_whiten;
 
 use wasm_bindgen::prelude::*;
+
+// ── Re-export GPU init ────────────────────────────────────────────────────────
+
+pub use gpu::init_gpu;
+
+// ── Re-export GPU/async operations ───────────────────────────────────────────
+
+pub use background::process_background;
+pub use lut3d::apply_lut3d;
+
+// ── Existing synchronous exports ─────────────────────────────────────────────
 
 #[wasm_bindgen]
 pub fn apply_filter(pixels: &[u8], _width: u32, _height: u32, filter: &str) -> Vec<u8> {
@@ -23,19 +42,8 @@ pub fn apply_filter(pixels: &[u8], _width: u32, _height: u32, filter: &str) -> V
     buf
 }
 
-#[wasm_bindgen]
-pub fn compose_frame(photo: &[u8], frame: &[u8], width: u32, height: u32) -> Vec<u8> {
-    compositor::alpha_composite(photo, frame, width, height)
-}
-
 const MASK_FEATHER_RADIUS: usize = 4;
 
-/// Build the skin mask used by both `apply_beauty` and `remove_blemish`.
-/// Exposed so JS callers can compute it once and reuse it across calls.
-///
-/// `face_oval`: face-outline polygon as flat [x0, y0, x1, y1, ...] in 0..1.
-/// `exclusions_packed`: packed sub-polygons to subtract (eyes, lips, ...);
-/// format `[n_polys, len_0, x,y,..., len_1, x,y,...]`. May be empty.
 #[wasm_bindgen]
 pub fn build_skin_mask(
     pixels: &[u8],
@@ -54,20 +62,11 @@ pub fn build_skin_mask(
     )
 }
 
-/// Skin smoothing + プリクラ tone adjustment. Caller pre-computes `mask` via
-/// `build_skin_mask` (or any other source) and passes it as an alpha buffer.
 #[wasm_bindgen]
-pub fn apply_beauty(
-    pixels: &[u8],
-    width: u32,
-    height: u32,
-    mask: &[u8],
-    strength: f32,
-) -> Vec<u8> {
+pub fn apply_beauty(pixels: &[u8], width: u32, height: u32, mask: &[u8], strength: f32) -> Vec<u8> {
     beauty::apply_beauty(pixels, width as usize, height as usize, mask, strength)
 }
 
-/// Blemish (dark-spot + redness) detection and inpainting, gated by `mask`.
 #[wasm_bindgen]
 pub fn remove_blemish(
     pixels: &[u8],
@@ -79,10 +78,6 @@ pub fn remove_blemish(
     blemish::remove_blemish(pixels, width as usize, height as usize, mask, strength)
 }
 
-/// Iris-centred eye enlargement.
-/// `eyes`: flat [cx0, cy0, r0, cx1, cy1, r1, ...] all normalized to image
-/// width (cy uses height). Each eye gets its own radius — typically iris
-/// radius × 2.5.
 #[wasm_bindgen]
 pub fn enlarge_eyes(
     pixels: &[u8],
@@ -92,4 +87,81 @@ pub fn enlarge_eyes(
     strength: f32,
 ) -> Vec<u8> {
     eye_warp::enlarge_eyes(pixels, width, height, eyes, strength)
+}
+
+// ── New synchronous exports ───────────────────────────────────────────────────
+
+#[wasm_bindgen]
+pub fn whiten_skin(pixels: &[u8], width: u32, height: u32, mask: &[u8], strength: f32) -> Vec<u8> {
+    skin_whiten::whiten_skin(pixels, width, height, mask, strength)
+}
+
+#[allow(clippy::too_many_arguments)]
+#[wasm_bindgen]
+pub fn apply_eye_sparkle(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    eyes: &[f32],
+    left_eye: &[f32],
+    right_eye: &[f32],
+    strength: f32,
+) -> Vec<u8> {
+    eye_sparkle::apply_eye_sparkle(pixels, width, height, eyes, left_eye, right_eye, strength)
+}
+
+#[wasm_bindgen]
+pub fn slim_face(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    face_oval: &[f32],
+    strength: f32,
+) -> Vec<u8> {
+    face_slim::slim_face(pixels, width, height, face_oval, strength)
+}
+
+/// Apply makeup effects (lip / eye-shadow / blush).
+///
+/// `lips_outer`, `left_eye`, `right_eye`: normalised flat polygon coordinates.
+/// `cheeks`: `[cx_left, cy_left, cx_right, cy_right]` normalised.
+/// `params_json`: JSON string matching `MakeupParamsJson`.
+#[allow(clippy::too_many_arguments)]
+#[wasm_bindgen]
+pub fn apply_makeup(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    lips_outer: &[f32],
+    left_eye: &[f32],
+    right_eye: &[f32],
+    cheeks: &[f32],
+    params_json: &str,
+) -> Vec<u8> {
+    makeup::apply_makeup(
+        pixels,
+        width,
+        height,
+        lips_outer,
+        left_eye,
+        right_eye,
+        cheeks,
+        params_json,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+#[wasm_bindgen]
+pub fn apply_color_overlay(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    r: u8,
+    g: u8,
+    b: u8,
+    alpha: f32,
+    blend_mode: &str,
+    vignette: f32,
+) -> Vec<u8> {
+    color_overlay::apply_color_overlay(pixels, width, height, r, g, b, alpha, blend_mode, vignette)
 }

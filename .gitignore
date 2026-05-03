@@ -1,6 +1,11 @@
 node_modules/
 dist/
 src/wasm/pkg/
+src/wasm/pkg_node/
 wasm/target/
+coverage/
 .DS_Store
 *.local
+photo/*
+src/state/*.jpg
+src/state/*.png

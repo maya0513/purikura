@@ -1,8 +1,7 @@
 pub fn apply_grayscale(pixels: &mut [u8]) {
     for chunk in pixels.chunks_exact_mut(4) {
-        let luma = (chunk[0] as f32 * 0.299
-            + chunk[1] as f32 * 0.587
-            + chunk[2] as f32 * 0.114) as u8;
+        let luma =
+            (chunk[0] as f32 * 0.299 + chunk[1] as f32 * 0.587 + chunk[2] as f32 * 0.114) as u8;
         chunk[0] = luma;
         chunk[1] = luma;
         chunk[2] = luma;
@@ -26,8 +25,10 @@ pub fn apply_vivid(pixels: &mut [u8]) {
         let g = chunk[1] as f32 / 255.0;
         let b = chunk[2] as f32 / 255.0;
         let (h, s, l) = rgb_to_hsl(r, g, b);
-        let s2 = (s * 1.4).min(1.0);
-        let (r2, g2, b2) = hsl_to_rgb(h, s2, l);
+        // Boost saturation strongly and add S-curve contrast for プリクラ vivid look.
+        let s2 = (s * 2.2 + 0.06).min(1.0);
+        let l2 = l * l * (3.0 - 2.0 * l) * 0.20 + l * 0.80; // mild S-curve
+        let (r2, g2, b2) = hsl_to_rgb(h, s2, l2);
         chunk[0] = (r2 * 255.0) as u8;
         chunk[1] = (g2 * 255.0) as u8;
         chunk[2] = (b2 * 255.0) as u8;
@@ -36,9 +37,10 @@ pub fn apply_vivid(pixels: &mut [u8]) {
 
 pub fn apply_soft(pixels: &mut [u8]) {
     for chunk in pixels.chunks_exact_mut(4) {
-        chunk[0] = ((chunk[0] as f32 * 0.85 + 128.0 * 0.15) as u8).saturating_add(8);
-        chunk[1] = ((chunk[1] as f32 * 0.85 + 128.0 * 0.15) as u8).saturating_add(8);
-        chunk[2] = ((chunk[2] as f32 * 0.85 + 128.0 * 0.15) as u8).saturating_add(8);
+        // Blend 30% toward light gray to create a dreamy matte/soft look.
+        chunk[0] = ((chunk[0] as f32 * 0.70 + 200.0 * 0.30) as u8).saturating_add(12);
+        chunk[1] = ((chunk[1] as f32 * 0.70 + 200.0 * 0.30) as u8).saturating_add(12);
+        chunk[2] = ((chunk[2] as f32 * 0.70 + 200.0 * 0.30) as u8).saturating_add(12);
     }
 }
 
@@ -52,8 +54,9 @@ pub fn apply_warm(pixels: &mut [u8]) {
 
 pub fn apply_cool(pixels: &mut [u8]) {
     for chunk in pixels.chunks_exact_mut(4) {
-        chunk[0] = chunk[0].saturating_sub(15);
-        chunk[2] = chunk[2].saturating_add(20);
+        chunk[0] = chunk[0].saturating_sub(30);
+        chunk[1] = chunk[1].saturating_sub(8);
+        chunk[2] = chunk[2].saturating_add(40);
     }
 }
 
@@ -65,7 +68,11 @@ fn rgb_to_hsl(r: f32, g: f32, b: f32) -> (f32, f32, f32) {
         return (0.0, 0.0, l);
     }
     let d = max - min;
-    let s = if l > 0.5 { d / (2.0 - max - min) } else { d / (max + min) };
+    let s = if l > 0.5 {
+        d / (2.0 - max - min)
+    } else {
+        d / (max + min)
+    };
     let h = if max == r {
         (g - b) / d + if g < b { 6.0 } else { 0.0 }
     } else if max == g {
@@ -80,17 +87,35 @@ fn hsl_to_rgb(h: f32, s: f32, l: f32) -> (f32, f32, f32) {
     if s.abs() < f32::EPSILON {
         return (l, l, l);
     }
-    let q = if l < 0.5 { l * (1.0 + s) } else { l + s - l * s };
+    let q = if l < 0.5 {
+        l * (1.0 + s)
+    } else {
+        l + s - l * s
+    };
     let p = 2.0 * l - q;
-    (hue_to_rgb(p, q, h + 1.0 / 3.0), hue_to_rgb(p, q, h), hue_to_rgb(p, q, h - 1.0 / 3.0))
+    (
+        hue_to_rgb(p, q, h + 1.0 / 3.0),
+        hue_to_rgb(p, q, h),
+        hue_to_rgb(p, q, h - 1.0 / 3.0),
+    )
 }
 
 fn hue_to_rgb(p: f32, q: f32, mut t: f32) -> f32 {
-    if t < 0.0 { t += 1.0; }
-    if t > 1.0 { t -= 1.0; }
-    if t < 1.0 / 6.0 { return p + (q - p) * 6.0 * t; }
-    if t < 1.0 / 2.0 { return q; }
-    if t < 2.0 / 3.0 { return p + (q - p) * (2.0 / 3.0 - t) * 6.0; }
+    if t < 0.0 {
+        t += 1.0;
+    }
+    if t > 1.0 {
+        t -= 1.0;
+    }
+    if t < 1.0 / 6.0 {
+        return p + (q - p) * 6.0 * t;
+    }
+    if t < 1.0 / 2.0 {
+        return q;
+    }
+    if t < 2.0 / 3.0 {
+        return p + (q - p) * (2.0 / 3.0 - t) * 6.0;
+    }
     p
 }
 
@@ -167,8 +192,9 @@ mod tests {
     fn cool_increases_blue() {
         let mut buf = vec![100u8, 100, 100, 255];
         apply_cool(&mut buf);
-        assert_eq!(buf[0], 85);
-        assert_eq!(buf[2], 120);
+        assert_eq!(buf[0], 70);
+        assert_eq!(buf[1], 92);
+        assert_eq!(buf[2], 140);
     }
 
     #[test]

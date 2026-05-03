@@ -17,8 +17,11 @@ export function App() {
 
   return (
     <div class="h-dvh flex flex-col overflow-hidden bg-cream">
-      <header class="h-10 shrink-0 flex items-center justify-center border-b border-candy-pink/40">
-        <h1 class="text-xl font-bold text-bubblegum" style={{ fontFamily: "var(--font-display)" }}>
+      <header class="h-10 md:h-12 shrink-0 flex items-center justify-center border-b border-candy-pink/40">
+        <h1
+          class="text-xl md:text-2xl font-bold text-bubblegum"
+          style={{ fontFamily: "var(--font-display)" }}
+        >
           📸 プリクラ
         </h1>
       </header>

@@ -11,13 +11,7 @@
 
 /// Separable sliding-window box filter on f32 data.
 /// Replicates boundary samples (extends edge pixels outward).
-fn box_filter_f32(
-    src: &[f32],
-    dst: &mut [f32],
-    width: usize,
-    height: usize,
-    radius: usize,
-) {
+fn box_filter_f32(src: &[f32], dst: &mut [f32], width: usize, height: usize, radius: usize) {
     let n = width * height;
     debug_assert_eq!(src.len(), n);
     debug_assert_eq!(dst.len(), n);
@@ -41,7 +35,7 @@ fn box_filter_f32(
         }
         for x in 0..width {
             tmp[row + x] = acc / win;
-            let left = if x >= radius { x - radius } else { 0 };
+            let left = x.saturating_sub(radius);
             let right = (x + radius + 1).min(width - 1);
             acc += src[row + right] - src[row + left];
         }
@@ -56,7 +50,7 @@ fn box_filter_f32(
         }
         for y in 0..height {
             dst[y * width + x] = acc / win;
-            let top = if y >= radius { y - radius } else { 0 };
+            let top = y.saturating_sub(radius);
             let bot = (y + radius + 1).min(height - 1);
             acc += tmp[bot * width + x] - tmp[top * width + x];
         }
@@ -118,8 +112,8 @@ pub fn guided_filter_rgba(
             chans[c][k] = pixels[k * 4 + c] as f32 / 255.0;
         }
     }
-    for c in 0..3 {
-        filter_channel(&mut chans[c], width, height, radius, eps);
+    for chan in &mut chans {
+        filter_channel(chan, width, height, radius, eps);
     }
 
     let mut out = vec![0u8; pixels.len()];
@@ -202,8 +196,7 @@ mod tests {
         // eps large enough to consider this noise "flat"
         let out = guided_filter_rgba(&pixels, w, h, 4, 0.01);
         // Compute std of input vs output
-        let mean_in: f32 =
-            (0..(w * h)).map(|k| pixels[k * 4] as f32).sum::<f32>() / (w * h) as f32;
+        let mean_in: f32 = (0..(w * h)).map(|k| pixels[k * 4] as f32).sum::<f32>() / (w * h) as f32;
         let mean_out: f32 = (0..(w * h)).map(|k| out[k * 4] as f32).sum::<f32>() / (w * h) as f32;
         let var_in: f32 = (0..(w * h))
             .map(|k| (pixels[k * 4] as f32 - mean_in).powi(2))

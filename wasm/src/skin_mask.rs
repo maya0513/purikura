@@ -18,7 +18,7 @@ const INSIDE_NONSKIN_DIM: u8 = 160; // when face polygon says "skin" but YCbCr s
 /// Even-odd ray casting point-in-polygon test.
 /// `poly` is a flat slice [x0, y0, x1, y1, ...] with values in any units.
 /// `(x, y)` must be in the same units.
-pub fn point_in_polygon(x: f32, y: f32, poly: &[f32]) -> bool {
+pub(crate) fn point_in_polygon(x: f32, y: f32, poly: &[f32]) -> bool {
     let n = poly.len() / 2;
     if n < 3 {
         return false;
@@ -94,7 +94,13 @@ fn is_skin_ycbcr(r: u8, g: u8, b: u8) -> bool {
 }
 
 /// One pass of separable box blur. Three passes ≈ Gaussian (CLT).
-fn box_blur_pass(src: &[u8], dst: &mut [u8], width: usize, height: usize, radius: usize) {
+pub(crate) fn box_blur_pass(
+    src: &[u8],
+    dst: &mut [u8],
+    width: usize,
+    height: usize,
+    radius: usize,
+) {
     if radius == 0 {
         dst.copy_from_slice(src);
         return;
@@ -114,7 +120,7 @@ fn box_blur_pass(src: &[u8], dst: &mut [u8], width: usize, height: usize, radius
         for x in 0..width {
             tmp[row + x] = (acc / win) as u16;
             // Slide: subtract leftmost (with replicate at boundary), add right
-            let left_idx = if x >= radius { x - radius } else { 0 };
+            let left_idx = x.saturating_sub(radius);
             let right_idx = (x + radius + 1).min(width - 1);
             acc = acc + src[row + right_idx] as u32 - src[row + left_idx] as u32;
         }
@@ -128,7 +134,7 @@ fn box_blur_pass(src: &[u8], dst: &mut [u8], width: usize, height: usize, radius
         acc += (radius as u32) * tmp[x] as u32;
         for y in 0..height {
             dst[y * width + x] = (acc / win) as u8;
-            let top_idx = if y >= radius { y - radius } else { 0 };
+            let top_idx = y.saturating_sub(radius);
             let bot_idx = (y + radius + 1).min(height - 1);
             acc = acc + tmp[bot_idx * width + x] as u32 - tmp[top_idx * width + x] as u32;
         }
@@ -149,7 +155,7 @@ fn feather(mask: &mut [u8], width: usize, height: usize, radius: usize) {
 
 /// Decode a packed exclusions buffer.
 /// Format: [n_polys, len_0, x0,y0,x1,y1,..., len_1, x0,y0,...]
-fn iter_packed_polys(packed: &[f32]) -> Vec<&[f32]> {
+pub(crate) fn iter_packed_polys(packed: &[f32]) -> Vec<&[f32]> {
     let mut out = Vec::new();
     if packed.is_empty() {
         return out;
@@ -364,7 +370,7 @@ mod tests {
             2.0f32, // n_polys
             3.0,    // len 0
             0.0, 0.0, 1.0, 0.0, 0.5, 1.0, // tri
-            4.0,    // len 1
+            4.0, // len 1
             0.0, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0, // sq
         ];
         let polys = iter_packed_polys(&packed);

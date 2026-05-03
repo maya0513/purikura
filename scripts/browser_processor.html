@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+  </head>
+  <body>
+    <p id="status">Initializing…</p>
+    <script type="module" src="./browser_processor_entry.ts"></script>
+    <script type="module">
+      // Update status text for visual debugging when running headed.
+      const tick = setInterval(() => {
+        if (window.__ready) {
+          document.getElementById("status").textContent = "Ready";
+          clearInterval(tick);
+        } else if (window.__initError) {
+          document.getElementById("status").textContent = "Error: " + window.__initError;
+          clearInterval(tick);
+        }
+      }, 200);
+    </script>
+  </body>
+</html>

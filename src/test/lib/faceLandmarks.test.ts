@@ -1,5 +1,46 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi, beforeAll, beforeEach } from "vite-plus/test";
 import { buildGeometry, type Keypoint } from "~/lib/faceLandmarks";
+
+// ── MediaPipe mock ────────────────────────────────────────────────────────────
+// Note: vi.mock factory is hoisted — do NOT reference top-level variables here.
+
+vi.mock("@mediapipe/tasks-vision", () => ({
+  FilesetResolver: {
+    forVisionTasks: vi.fn().mockResolvedValue({}),
+  },
+  FaceLandmarker: {
+    createFromOptions: vi.fn(),
+  },
+}));
+
+// Stubs for canvas / ImageData (happy-dom gaps).
+beforeAll(() => {
+  vi.stubGlobal(
+    "ImageData",
+    class {
+      data: Uint8ClampedArray;
+      width: number;
+      height: number;
+      constructor(data: Uint8ClampedArray, w: number, h: number) {
+        this.data = data;
+        this.width = w;
+        this.height = h;
+      }
+    },
+  );
+
+  const makeCtx = () => ({ putImageData: vi.fn() });
+  const origCreate = document.createElement.bind(document);
+  vi.spyOn(document, "createElement").mockImplementation((tag: string) => {
+    if (tag === "canvas")
+      return {
+        width: 0,
+        height: 0,
+        getContext: () => makeCtx(),
+      } as unknown as HTMLCanvasElement;
+    return origCreate(tag as "div");
+  });
+});
 
 // Synth: 478 keypoints arranged so each index has predictable coordinates.
 // This lets us check the geometry packing logic without needing MediaPipe.
@@ -22,6 +63,56 @@ function syntheticKeypoints(): Keypoint[] {
   kps[477] = { x: 0.58, y: 0.45 };
   return kps;
 }
+
+// ── extractGeometry ───────────────────────────────────────────────────────────
+// Each test resets modules so landmarkerPromise (module-level cache) is cleared.
+// After reset, dynamic imports give fresh instances; configure the fresh mock
+// by importing @mediapipe/tasks-vision dynamically (the vi.mock factory re-runs).
+
+describe("extractGeometry", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.resetModules();
+  });
+
+  it("顔が検出されないとき null を返す", async () => {
+    const detect = vi.fn().mockReturnValue({ faceLandmarks: [] });
+    const { FaceLandmarker } = await import("@mediapipe/tasks-vision");
+    vi.mocked(FaceLandmarker.createFromOptions).mockResolvedValue({ detect } as never);
+
+    const { extractGeometry } = await import("~/lib/faceLandmarks");
+    const result = await extractGeometry(new Uint8ClampedArray(640 * 480 * 4), 640, 480);
+    expect(result).toBeNull();
+  });
+
+  it("顔が検出されたとき FaceGeometry を返す", async () => {
+    const kps = syntheticKeypoints();
+    const detect = vi
+      .fn()
+      .mockReturnValue({ faceLandmarks: [kps.map((k) => ({ x: k.x, y: k.y, z: 0 }))] });
+    const { FaceLandmarker } = await import("@mediapipe/tasks-vision");
+    vi.mocked(FaceLandmarker.createFromOptions).mockResolvedValue({ detect } as never);
+
+    const { extractGeometry } = await import("~/lib/faceLandmarks");
+    const result = await extractGeometry(new Uint8ClampedArray(640 * 480 * 4), 640, 480);
+    expect(result).not.toBeNull();
+    expect(result!.faceOval).toHaveLength(72);
+  });
+
+  it("loadDetector がキャッシュされる（2 回目は createFromOptions を呼ばない）", async () => {
+    const detect = vi.fn().mockReturnValue({ faceLandmarks: [] });
+    const { FaceLandmarker } = await import("@mediapipe/tasks-vision");
+    vi.mocked(FaceLandmarker.createFromOptions).mockResolvedValue({ detect } as never);
+
+    const { extractGeometry } = await import("~/lib/faceLandmarks");
+    const rgba = new Uint8ClampedArray(640 * 480 * 4);
+    await extractGeometry(rgba, 640, 480);
+    await extractGeometry(rgba, 640, 480);
+    expect(FaceLandmarker.createFromOptions).toHaveBeenCalledOnce();
+  });
+});
+
+// ── buildGeometry ─────────────────────────────────────────────────────────────
 
 describe("buildGeometry", () => {
   it("returns null for too-few keypoints (no iris refine)", () => {

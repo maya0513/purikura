@@ -7,11 +7,8 @@
     "prepare": "vp config"
   },
   "dependencies": {
+    "@mediapipe/tasks-vision": "^0.10.22",
     "@preact/signals": "^2.0.0",
-    "@tensorflow-models/face-landmarks-detection": "^1.0.6",
-    "@tensorflow/tfjs-backend-webgl": "^4.22.0",
-    "@tensorflow/tfjs-converter": "^4.22.0",
-    "@tensorflow/tfjs-core": "^4.22.0",
     "preact": "^10.25.0"
   },
   "devDependencies": {
@@ -19,19 +16,27 @@
     "@tailwindcss/vite": "^4.0.0",
     "@testing-library/preact": "^3.2.0",
     "@types/node": "^22.0.0",
+    "@types/sharp": "^0.31",
+    "@vitest/coverage-v8": "^4.1.5",
     "happy-dom": "^17.0.0",
+    "playwright": "^1.59.1",
+    "sharp": "^0.33",
     "tailwindcss": "^4.0.0",
+    "tsx": "^4.19",
     "typescript": "^5.8.0",
     "vite-plugin-top-level-await": "^1.4.0",
     "vite-plugin-wasm": "^3.3.0",
     "vite-plus": "latest",
-    "wasm-pack": "^0.13.0"
+    "wasm-pack": "^0.13.0",
+    "wrangler": "^4.87.0"
   },
   "packageManager": "pnpm@10.33.2",
   "pnpm": {
     "onlyBuiltDependencies": [
       "wasm-pack",
-      "@swc/core"
+      "@swc/core",
+      "sharp",
+      "workerd"
     ],
     "overrides": {
       "vite": "npm:@voidzero-dev/vite-plus-core@latest",
