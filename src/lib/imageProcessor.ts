@@ -114,6 +114,10 @@ export async function initWasm(): Promise<void> {
 
 export async function initGpu(): Promise<void> {
   if (!wasm) throw new Error("WASM not initialized");
+  // Guard: wgpu accesses navigator.gpu synchronously before returning a
+  // Promise, so a missing WebGPU implementation throws before our try/catch
+  // can catch it.  Skip entirely when the API isn't present.
+  if (typeof navigator === "undefined" || !("gpu" in navigator)) return;
   try {
     await wasm.init_gpu();
   } catch {
